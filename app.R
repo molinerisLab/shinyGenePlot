@@ -5,7 +5,7 @@ library(dplyr)
 library(tidyr)
 library(readr)
 library(DT)
-library(sortable) # For sortable inputs
+library(sortable)  # For sortable list
 
 ui <- fluidPage(
   titlePanel("Gene Expression Visualization"),
@@ -15,10 +15,10 @@ ui <- fluidPage(
       # File inputs
       fileInput("expressionFile", "Upload Gene Expression Matrix (CSV/TSV):",
                 accept = c("text/csv", "text/comma-separated-values", "text/tab-separated-values", 
-                           ".csv", ".tsv", ".gz")),
+                           ".csv", ".tsv", ".gz", "application/gzip")),
       fileInput("metadataFile", "Upload Sample Metadata (CSV/TSV):",
                 accept = c("text/csv", "text/comma-separated-values", "text/tab-separated-values", 
-                           ".csv", ".tsv", ".txt")),
+                           ".csv", ".tsv", ".txt", "text/plain")),
       
       # Only show these UI elements after files are loaded
       conditionalPanel(
@@ -42,13 +42,15 @@ ui <- fluidPage(
     ),
     
     mainPanel(
-      # Show gene expression plot
-      plotOutput("expressionPlot", height = "500px"),
-      
-      # Show data preview tabs
+      # Show content in tabs
       tabsetPanel(
-        tabPanel("Expression Data Preview", DTOutput("expressionPreview")),
-        tabPanel("Metadata Preview", DTOutput("metadataPreview"))
+        # Gene expression plot tab
+        tabPanel("Plot", 
+          plotOutput("expressionPlot", height = "700px")
+        ),
+        # Data preview tabs
+        tabPanel("Expression Data", DTOutput("expressionPreview")),
+        tabPanel("Metadata", DTOutput("metadataPreview"))
       )
     )
   )
@@ -76,11 +78,33 @@ server <- function(input, output, session) {
   observeEvent(input$expressionFile, {
     req(input$expressionFile)
     
-    # Detect delimiter
-    delimiter <- detectDelimiter(input$expressionFile$datapath)
+    # Check if file is gzipped
+    is_gzipped <- grepl("\\.gz$", input$expressionFile$name, ignore.case = TRUE)
     
-    # Read expression file (assuming first column contains gene names)
-    df <- read.delim(input$expressionFile$datapath, sep = delimiter, check.names = FALSE)
+    if (is_gzipped) {
+      # Read gzipped file
+      con <- gzfile(input$expressionFile$datapath, "rt")
+      first_line <- readLines(con, n = 1)
+      close(con)
+      
+      # Determine delimiter
+      if (grepl("\t", first_line)) {
+        delimiter <- "\t"
+      } else {
+        delimiter <- ","
+      }
+      
+      # Re-open and read full file
+      con <- gzfile(input$expressionFile$datapath, "rt")
+      df <- read.delim(con, sep = delimiter, check.names = FALSE)
+      close(con)
+    } else {
+      # Detect delimiter for non-gzipped file
+      delimiter <- detectDelimiter(input$expressionFile$datapath)
+      
+      # Read expression file (assuming first column contains gene names)
+      df <- read.delim(input$expressionFile$datapath, sep = delimiter, check.names = FALSE)
+    }
     
     # Store gene expression data
     data$expression <- df
@@ -121,11 +145,22 @@ server <- function(input, output, session) {
     # Get unique levels for the selected grouping variable
     group_levels <- unique(data$metadata[[input$groupVar]])
     
-    # Simple alternative: Use checkboxGroupInput for ordering
-    # The order of selection will determine the display order
-    checkboxGroupInput("factorOrder", "Select Group Levels in Desired Order:", 
-                       choices = group_levels,
-                       selected = group_levels)
+    # Create a true drag-and-drop sortable list
+    tagList(
+      tags$label("Drag to Reorder Group Levels:"),
+      tags$div(
+        style = "margin-bottom: 15px;",
+        "Drag items to reorder them. The order here will be used in the plot."
+      ),
+      rank_list(
+        input_id = "factorOrder",
+        labels = group_levels,
+        text = "",
+        css_id = "factor-rank-list",
+        class = "default-sortable",
+        orientation = "vertical"
+      )
+    )
   })
   
   # Prepare data for plotting
@@ -148,7 +183,7 @@ server <- function(input, output, session) {
                    names_to = "sample_id", 
                    values_to = "expression")
     
-    # Join with metadata
+    # Join with metadata (fixed join syntax)
     plot_data <- long_data %>%
       left_join(data$metadata, by = c("sample_id" = sample_col))
     
@@ -169,8 +204,8 @@ server <- function(input, output, session) {
     
     # Create the plot
     ggplot(data$plotData, aes_string(x = input$groupVar, 
-                                     y = "expression", 
-                                     fill = input$colorVar)) +
+                                    y = "expression", 
+                                    fill = input$colorVar)) +
       geom_boxplot(alpha = 0.7, outlier.shape = 21) +
       facet_wrap(~ .data[[gene_col]], scales = "free_y") +
       theme_bw() +
