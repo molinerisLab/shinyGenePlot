@@ -173,6 +173,13 @@ server <- function(input, output, session) {
     # Get sample IDs from metadata (first column)
     sample_col <- colnames(data$metadata)[1]
     
+    sC<-colnames(data$expression)[2:length(data$expression)]
+    sM<-data$metadata[,1]
+
+    #test if there are missing samples in the metadata
+    missing_samples <- setdiff(sC,sM)
+    
+    
     # Filter expression data to selected genes
     gene_data <- data$expression %>%
       filter(!!sym(gene_col) %in% input$selectedGenes)
@@ -183,13 +190,45 @@ server <- function(input, output, session) {
                    names_to = "sample_id", 
                    values_to = "expression")
     
+    
+    
+    # Trim whitespace from sample IDs to avoid join issues
+    long_data$sample_id <- trimws(long_data$sample_id)
+    data$metadata[[sample_col]] <- trimws(data$metadata[[sample_col]])
+    
     # Join with metadata (fixed join syntax)
     plot_data <- long_data %>%
       left_join(data$metadata, by = c("sample_id" = sample_col))
     
-    # Convert grouping variable to factor with custom order
+    if(length(missing_samples) > 0) {
+      warning_msg <- paste("Warning: Some samples in expression data are not in metadata and are removed from the plot:",
+                           paste(missing_samples, collapse=", "))
+      showNotification(warning_msg, type = "warning", duration = 10)
+      
+      # Remove rows with NA grouping variable to avoid NA in plot
+      plot_data <- plot_data %>% filter(!is.na(!!sym(input$groupVar)))
+    }
+    
+    # Important: Ensure ALL levels are properly ordered according to the sortable list
+    # First convert to character to avoid factor level issues
+    plot_data[[input$groupVar]] <- as.character(plot_data[[input$groupVar]])
+    
+    # Then create a new factor with explicit levels from the sortable list
+    # This ensures the exact order from the UI is respected
+    factor_levels <- input$factorOrder
+    
+    # Check if there are any levels in the data that aren't in the sortable
+    all_levels_in_data <- unique(plot_data[[input$groupVar]])
+    missing_levels <- setdiff(all_levels_in_data, factor_levels)
+    
+    # If there are missing levels, add them to the end of the factor levels
+    if(length(missing_levels) > 0) {
+      factor_levels <- c(factor_levels, missing_levels)
+    }
+    
+    # Now set the factor with the complete ordered levels
     plot_data[[input$groupVar]] <- factor(plot_data[[input$groupVar]], 
-                                          levels = input$factorOrder)
+                                          levels = factor_levels)
     
     # Store plot data
     data$plotData <- plot_data
@@ -204,9 +243,11 @@ server <- function(input, output, session) {
     
     # Create the plot
     ggplot(data$plotData, aes_string(x = input$groupVar, 
-                                     y = "expression", 
-                                     fill = input$colorVar)) +
-      geom_boxplot(alpha = 0.7, outlier.shape = 21) +
+                                     y = "expression",
+                                     group = input$groupVar,
+                                     color = input$colorVar)) +
+      geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+      geom_jitter(height = 0) +
       facet_wrap(~ .data[[gene_col]], scales = "free_y") +
       theme_bw() +
       labs(
