@@ -46,7 +46,7 @@ ui <- fluidPage(
       tabsetPanel(
         # Gene expression plot tab
         tabPanel("Plot", 
-          plotOutput("expressionPlot", height = "700px")
+                 plotOutput("expressionPlot", height = "700px")
         ),
         # Data preview tabs
         tabPanel("Expression Data", DTOutput("expressionPreview")),
@@ -204,8 +204,8 @@ server <- function(input, output, session) {
     
     # Create the plot
     ggplot(data$plotData, aes_string(x = input$groupVar, 
-                                    y = "expression", 
-                                    fill = input$colorVar)) +
+                                     y = "expression", 
+                                     fill = input$colorVar)) +
       geom_boxplot(alpha = 0.7, outlier.shape = 21) +
       facet_wrap(~ .data[[gene_col]], scales = "free_y") +
       theme_bw() +
